@@ -3,7 +3,9 @@ import utilities
 import numpy as np
 from opencmiss.iron import iron
 
-def interpolate_opencmiss_field(field, element_ids=[], xi=None, num_values=4,dimension=3, derivative_number=1, elems=None, face=None, value=0.):
+def interpolate_opencmiss_field(
+        field, element_ids=[], xi=None, num_values=4, dimension=3,
+        derivative_number=1, elems=None, face=None, value=0.):
     import mesh_tools.fields as fields
 
     if xi is None:
@@ -11,7 +13,8 @@ def interpolate_opencmiss_field(field, element_ids=[], xi=None, num_values=4,dim
             XiNd = fields.generate_xi_grid_fem(
                 num_points=[num_values, num_values, num_values])
         else:
-            XiNd = fields.generate_xi_on_face(face, value, num_points=num_values, dim=dimension)
+            XiNd = fields.generate_xi_on_face(
+                face, value, num_points=num_values, dim=dimension)
 
         num_elem_values = XiNd.shape[0]
         num_Xe = len(element_ids)
@@ -23,8 +26,10 @@ def interpolate_opencmiss_field(field, element_ids=[], xi=None, num_values=4,dim
         for elem_idx, element_id in enumerate(element_ids):
             for point_idx in range(num_elem_values):
                 single_xi = XiNd[point_idx,:]
-                values[elem_idx, point_idx, :] = field.ParameterSetInterpolateSingleXiDP(iron.FieldVariableTypes.U,
-                                                             iron.FieldParameterSetTypes.VALUES, derivative_number, int(element_id), single_xi, dimension)
+                values[elem_idx, point_idx, :] = field.ParameterSetInterpolateSingleXiDP(
+                    iron.FieldVariableTypes.U,
+                    iron.FieldParameterSetTypes.VALUES, derivative_number,
+                    int(element_id), single_xi, dimension)
             xi[elem_idx, :, :] = XiNd
             elements[elem_idx, :] = element_id
 
@@ -38,8 +43,9 @@ def interpolate_opencmiss_field(field, element_ids=[], xi=None, num_values=4,dim
         for point_idx in range(xi.shape[0]):
             element_id = elems[point_idx]
             single_xi = xi[point_idx,:]
-            values[point_idx, :] = field.ParameterSetInterpolateSingleXiDP(iron.FieldVariableTypes.U,
-                                                         iron.FieldParameterSetTypes.VALUES, derivative_number, int(element_id), single_xi, dimension)
+            values[point_idx, :] = field.ParameterSetInterpolateSingleXiDP(
+                iron.FieldVariableTypes.U, iron.FieldParameterSetTypes.VALUES,
+                derivative_number, int(element_id), single_xi, dimension)
         return values
 
 
@@ -152,16 +158,106 @@ def interpolate_opencmiss_field_sample(
 
     return values, xi, elements
 
+
+def interpolate_opencmiss_field_at_xi(
+        field, XiNd, element_ids=None, dimension=3, num_components=3,
+        derivative_number=1, unique=False, geometric_field=None, debug=False):
+    """ Interpolates and OpenCMISS field at selected points along xi directions
+
+    Args:
+        field (OpenCMISS field object): The general field to interpolate
+        XiNd (list): xi values to interpolate the field at.
+        element_ids (ndarray): Mesh element ids to interpolate. Defaults to all
+          elements if none are specified.
+        dimension (int): dimension of the field being interpolated
+          (e.g. 3 for 3D)
+        num_components (int): number of field components to interpolate
+          (e.g. 3 for 3D)
+        Todo Identify number of components directly from the OpenCMISS field
+             object
+        derivative_number (int): The field derivative to interpolate
+        unique(bool): Return interpolated field values at only unique geometric
+          values
+        geometric_field(OpenCMISS field object): Required for unique option
+
+    Returns:
+        values, xi, elements
+    """
+
+    num_elem_values = XiNd.shape[0]
+    num_Xe = len(element_ids)
+    total_num_values = num_Xe * num_elem_values
+    values = np.zeros((num_Xe, num_elem_values, num_components))
+    xi = np.zeros((num_Xe, num_elem_values, dimension))
+    elements = np.zeros((num_Xe, num_elem_values, 1), dtype=int)
+
+    for elem_idx, element_id in enumerate(element_ids):
+        for point_idx in range(num_elem_values):
+            single_xi = XiNd[point_idx,:]
+            values[elem_idx, point_idx,
+            :] = field.ParameterSetInterpolateSingleXiDP(
+                iron.FieldVariableTypes.U, iron.FieldParameterSetTypes.VALUES,
+                derivative_number, int(element_id), single_xi, num_components)
+        xi[elem_idx, :, :] = XiNd
+        elements[elem_idx, :] = element_id
+
+    # Reshape interpolated field values into a vector
+    values = np.reshape(values, (total_num_values, num_components))
+    xi = np.reshape(xi, (total_num_values, dimension))
+    elements = np.reshape(elements, (total_num_values))
+
+    if unique:
+        # Evaluate geometric field at xi values and select general field values
+        # that only have unique coordinates
+        if geometric_field is None:
+            raise ValueError(
+                'Geometric field is required for returning unique field values')
+        geometric_values = np.zeros((total_num_values, dimension))
+        for point_idx in range(total_num_values):
+            geometric_values[point_idx,
+            :] = geometric_field.ParameterSetInterpolateSingleXiDP(
+                iron.FieldVariableTypes.U,
+                iron.FieldParameterSetTypes.VALUES, derivative_number,
+                int(elements[point_idx]), xi[point_idx, :], dimension)
+            if debug:
+                print('Point num         : ', point_idx+1)
+                print('  True value      : ', geometric_values[point_idx, :])
+                print('  Projected value : ', values[point_idx, :])
+        # Identify unique geometric field values
+        _, indices = utilities.np_1_13_unique(
+            np.vstack((
+                geometric_values[:, 0].round(decimals=4),
+                geometric_values[:, 1].round(decimals=4),
+                geometric_values[:, 2].round(decimals=4))).T,
+            axis=0, return_index=True)
+
+        # Select only unique general field values
+        values = values[sorted(indices), :]
+        xi = xi[sorted(indices), :]
+        elements = elements[sorted(indices)]
+
+        if debug:
+            for point_idx in range(len(elements)):
+                print('Point num: ', point_idx+1)
+                print('  element num   : ', elements[point_idx])
+                print('  xi            : ', xi[point_idx, :])
+                print('  position      : ', values[point_idx, :])
+
+    return values, xi, elements
+
 def interpolate_opencmiss_field_xi(
-        field, xi, element_ids=[], dimension=3, deriv=1):
+        field, xi, element_ids=[], dimension=3, deriv=1,
+        variable=iron.FieldVariableTypes.U):
+    num_field_components = field.NumberOfComponentsGet(iron.FieldVariableTypes.U)
+    xi = np.atleast_2d(xi)
     num_values = xi.shape[0]
-    values = np.zeros((num_values, dimension))
+    values = np.zeros((num_values, num_field_components))
     for point_idx in range(xi.shape[0]):
         element_id = element_ids[point_idx]
         values[point_idx, :] = field.ParameterSetInterpolateSingleXiDP(
-            iron.FieldVariableTypes.U,
+            variable,
             iron.FieldParameterSetTypes.VALUES, deriv,
-            int(element_id), xi[point_idx, :], dimension)
+            int(element_id), xi[point_idx, :], num_field_components)
     return values
 
 

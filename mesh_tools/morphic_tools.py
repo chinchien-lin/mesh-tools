@@ -155,8 +155,64 @@ def visualise_mesh(
                         '{0}_Text'.format(label), mesh.get_nodes(nodes), nodes,
                         size=3)
 
-def renumber_mesh(mesh, node_offset=0, element_offset=0, label='',
-                  debug=False):
+
+def mesh_element_centroids(mesh, element_nums='all'):
+    """
+    Returns the centroids of mesh elements.
+
+    These can be used as coordinates for plotting element numbers.
+    Centroids are calculated at the centre of each element.
+
+    Keyword arguments:
+    mesh -- morphic mesh
+    element_nums -- element numbers to calculate centroids for.
+    """
+
+    if element_nums == 'all':
+        element_nums = mesh.get_element_ids()
+
+    element_centroids = []
+
+    for element_idx, element in enumerate(mesh.elements):
+        if element_nums == 'all' or element.id in element_nums:
+            element_centroids.append(
+                element.evaluate([0.5]*len(element.basis)).tolist())
+
+    return element_nums, element_centroids
+
+def mesh_subset(mesh, element_nums):
+    """
+    Returns a subset of elements.
+
+    Keyword arguments:
+    mesh -- morphic mesh to renumber
+    element_nums -- node offset of the renumbered mesh
+    """
+
+    mesh_subset = morphic.Mesh()
+    element_nodes = []
+
+    for element_idx, element in enumerate(mesh.elements):
+        if element.id in element_nums:
+            element_nodes.append(element.node_ids)
+    element_nodes = np.unique(np.array(element_nodes).flatten())
+
+    for n_id in element_nodes:
+        mesh_subset.add_stdnode(
+            n_id, mesh.get_nodes(n_id, group=b'_default')[0], group='_default')
+
+    for element_idx, e_id in enumerate(element_nums):
+        element = mesh.elements[e_id]
+        mesh_subset.add_element(
+            element.id, element.basis, element.node_ids)
+
+    mesh_subset.generate(True)
+    mesh_subset.label = mesh.label
+
+    return mesh_subset
+
+def renumber_mesh(
+        mesh, node_offset=0, element_offset=0, label='', debug=False):
     """
     Renumbers a mesh sequentially
 
